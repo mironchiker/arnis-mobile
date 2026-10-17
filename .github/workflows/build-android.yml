@@ -1,53 +1,87 @@
 name: Build Android APK (Manual)
 
 on:
-  workflow_dispatch: # Запуск только вручную по кнопке в Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Требуется для создания GitHub Release и загрузки файлов
+      contents: write
 
     steps:
+      # ── 1. checkout ────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ── 2. Java 17 (нужен для Gradle + keytool) ───────────────────────────
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
+      # ── 3. Android NDK r26b ───────────────────────────────────────────────
       - name: Set up Android NDK
+        id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r26b
+          add-to-path: true
 
+      # ── 4. Android SDK build-tools ────────────────────────────────────────
+      - name: Set up Android SDK build-tools
+        uses: android-actions/setup-android@v3
+
+      # ── 5. Rust stable + aarch64 target ───────────────────────────────────
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
+      # ── 6. кэшируем cargo ─────────────────────────────────────────────────
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-android-
+
+      # ── 7. cargo-ndk ──────────────────────────────────────────────────────
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
-      - name: Build Rust JNI Library (.so)
+      # ── 8. собираем libарnis_mobile.so ────────────────────────────────────
+      - name: Build Rust JNI library (.so)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          mkdir -p ./android/app/src/main/jniLibs/arm64-v8a
-          cargo ndk -t arm64-v8a -o ./android/app/src/main/jniLibs build --release --no-default-features
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cargo ndk \
+            -t arm64-v8a \
+            -o android/app/src/main/jniLibs \
+            build --release --no-default-features
+          echo "Built .so:"
+          ls -lh android/app/src/main/jniLibs/arm64-v8a/
 
-      - name: Setup Complete Android Project Structure & Keystore
+      # ── 9. Android project structure ───────────────────────────────────────
+      - name: Generate Android project files
         run: |
+          set -euo pipefail
           mkdir -p android/app/src/main/java/com/arnis/app
-          mkdir -p android/app/src/main/res
+          mkdir -p android/app/src/main/res/values
 
-          cat << 'EOF' > android/settings.gradle
+          cat > android/settings.gradle << 'GRADLE'
           rootProject.name = "ArnisMobile"
           include ':app'
-          EOF
+          GRADLE
 
-          cat << 'EOF' > android/build.gradle
+          cat > android/build.gradle << 'GRADLE'
           buildscript {
               repositories {
                   google()
@@ -66,9 +100,9 @@ jobs:
           task clean(type: Delete) {
               delete rootProject.buildDir
           }
-          EOF
+          GRADLE
 
-          cat << 'EOF' > android/app/build.gradle
+          cat > android/app/build.gradle << 'GRADLE'
           plugins {
               id 'com.android.application'
           }
@@ -81,17 +115,17 @@ jobs:
                   applicationId "com.arnis.app"
                   minSdk 24
                   targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
+                  versionCode ${{ github.run_number }}
+                  versionName "1.0.${{ github.run_number }}"
+              }
+
+              sourceSets {
+                  main {
+                      jniLibs.srcDirs = ['src/main/jniLibs']
+                  }
               }
 
               signingConfigs {
-                  debug {
-                      storeFile file('debug.keystore')
-                      storePassword 'android'
-                      keyAlias 'androiddebugkey'
-                      keyPassword 'android'
-                  }
                   release {
                       storeFile file('debug.keystore')
                       storePassword 'android'
@@ -107,53 +141,93 @@ jobs:
                       minifyEnabled false
                       signingConfig signingConfigs.release
                   }
-                  debug {
-                      signingConfig signingConfigs.debug
-                  }
+              }
+
+              packagingOptions {
+                  doNotStrip "**/*.so"
               }
           }
 
-          dependencies {
-          }
-          EOF
+          dependencies {}
+          GRADLE
 
-          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+          cat > android/app/src/main/AndroidManifest.xml << 'XML'
+          <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="29" />
               <application
                   android:allowBackup="true"
                   android:label="Arnis"
-                  android:supportsRtl="true">
+                  android:supportsRtl="true"
+                  android:usesCleartextTraffic="false">
               </application>
           </manifest>
-          EOF
+          XML
 
-          # Генерируем debug.keystore для подписи v1/v2
-          cd android/app
-          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          cat > android/app/src/main/res/values/strings.xml << 'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Arnis</string>
+          </resources>
+          XML
 
-      - name: Setup & Run Gradle 8.5 Manually
+      # ── 10. keystore ──────────────────────────────────────────────────────
+      - name: Generate debug keystore
+        run: |
+          keytool \
+            -genkey -v \
+            -keystore android/app/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      # ── 11. Gradle 8.5 + assembleRelease ──────────────────────────────────
+      - name: Build APK with Gradle
         run: |
           cd android
-          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip
-          unzip -q gradle-8.5-bin.zip
-          export PATH=$PWD/gradle-8.5/bin:$PATH
+          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip -O gradle.zip
+          unzip -q gradle.zip
+          export PATH="$PWD/gradle-8.5/bin:$PATH"
           gradle --version
-          gradle assembleRelease --no-daemon
+          gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Upload APK Artifact
+      # ── 12. verify ────────────────────────────────────────────────────────
+      - name: Verify APK
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "APK not found at $APK_PATH"
+            find android/app/build/outputs -name "*.apk" 2>/dev/null || echo "no apks found"
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
+
+      # ── 13. upload artifact ───────────────────────────────────────────────
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arnis-mobile-apk
-          path: android/app/build/outputs/apk/**/*.apk
+          name: arnis-mobile-apk-${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
 
-      - name: Create GitHub Release and Upload APK
+      # ── 14. GitHub Release ────────────────────────────────────────────────
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "Arnis Mobile v1.0.${{ github.run_number }}"
-          body: "Автоматически собранный Android APK с поддержкой подписей v1/v2."
+          body: |
+            Android APK — автосборка из Actions.
+
+            **Установка:** скачай APK, разреши установку из неизвестных источников, установи.
+            **Минимальная версия Android:** 7.0 (API 24)
+            **Архитектура:** arm64-v8a
           files: android/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
