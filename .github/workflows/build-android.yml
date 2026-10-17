@@ -37,7 +37,7 @@ jobs:
           mkdir -p ./android/app/src/main/jniLibs/arm64-v8a
           cargo ndk -t arm64-v8a -o ./android/app/src/main/jniLibs build --release --no-default-features
 
-      - name: Setup Complete Android Project Structure
+      - name: Setup Complete Android Project Structure & Keystore
         run: |
           mkdir -p android/app/src/main/java/com/arnis/app
           mkdir -p android/app/src/main/res
@@ -68,7 +68,6 @@ jobs:
           }
           EOF
 
-          # Настраиваем app/build.gradle с принудительным включением подписей v1 и v2
           cat << 'EOF' > android/app/build.gradle
           plugins {
               id 'com.android.application'
@@ -119,8 +118,7 @@ jobs:
           EOF
 
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="com.arnis.app">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <application
@@ -130,6 +128,10 @@ jobs:
               </application>
           </manifest>
           EOF
+
+          # Генерируем debug.keystore для подписи v1/v2
+          cd android/app
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Setup & Run Gradle 8.5 Manually
         run: |
