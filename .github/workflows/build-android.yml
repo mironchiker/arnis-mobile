@@ -32,13 +32,77 @@ jobs:
 
       - name: Build Rust JNI Library (.so)
         run: |
+          mkdir -p ./android/app/src/main/jniLibs/arm64-v8a
           cargo ndk -t arm64-v8a -o ./android/app/src/main/jniLibs build --release --no-default-features
 
-      - name: Install Gradle & Upgrade Wrapper for Java 17
+      - name: Install Gradle & Auto-Generate Missing Android Project Files
         run: |
           sudo apt-get update
           sudo apt-get install -y gradle
           cd android
+
+          # Если нет settings.gradle, создаем базовую структуру для сборки app
+          if [ ! -f "settings.gradle" ]; then
+            echo "Creating missing settings.gradle..."
+            echo "rootProject.name = 'ArnisMobile'" > settings.gradle
+            echo "include ':app'" >> settings.gradle
+          fi
+
+          # Если нет build.gradle в корне, создаем базовый
+          if [ ! -f "build.gradle" ]; then
+            echo "Creating missing root build.gradle..."
+            cat << 'EOF' > build.gradle
+            buildscript {
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+                dependencies {
+                    classpath 'com.android.tools.build:gradle:8.1.4'
+                }
+            }
+            allprojects {
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+            }
+            task clean(type: Delete) {
+                delete rootProject.buildDir
+            }
+            EOF
+          fi
+
+          # Если в папке app нет build.gradle, создаем его для сборки нативного модуля
+          mkdir -p app
+          if [ ! -f "app/build.gradle" ]; then
+            echo "Creating missing app/build.gradle..."
+            cat << 'EOF' > app/build.gradle
+            plugins {
+                id 'com.android.application'
+            }
+            android {
+                namespace 'com.arnis.app'
+                compileSdk 34
+                defaultConfig {
+                    applicationId "com.arnis.app"
+                    minSdk 24
+                    targetSdk 34
+                    versionCode 1
+                    versionName "1.0"
+                }
+                buildTypes {
+                    release {
+                        minifyEnabled false
+                    }
+                }
+            }
+            dependencies {
+            }
+            EOF
+          fi
+
+          # Обновляем Gradle Wrapper до версии 8.5 для поддержки Java 17
           gradle wrapper --gradle-version 8.5
           chmod +x gradlew
 
