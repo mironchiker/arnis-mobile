@@ -612,7 +612,7 @@ fn place_underwater_dunes(
     if h_f < 0.28 {
         return 0;
     }
-    let t = (h_f - 0.28) / 0.72;
+    let t: f32 = (h_f - 0.28) / 0.72;
     let bump = ((t.powf(0.45) * (amp as f32 + 0.99)).floor() as i32).clamp(1, amp);
     for dy in 1..=bump {
         let y = bed_y + dy;
