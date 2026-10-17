@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Требуется для создания GitHub Release и загрузки файлов
 
     steps:
       - name: Checkout repository
@@ -66,6 +68,7 @@ jobs:
           }
           EOF
 
+          # Настраиваем app/build.gradle с принудительным включением подписей v1 и v2
           cat << 'EOF' > android/app/build.gradle
           plugins {
               id 'com.android.application'
@@ -83,9 +86,30 @@ jobs:
                   versionName "1.0"
               }
 
+              signingConfigs {
+                  debug {
+                      storeFile file('debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+                  release {
+                      storeFile file('debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                      v1SigningEnabled true
+                      v2SigningEnabled true
+                  }
+              }
+
               buildTypes {
                   release {
                       minifyEnabled false
+                      signingConfig signingConfigs.release
+                  }
+                  debug {
+                      signingConfig signingConfigs.debug
                   }
               }
           }
@@ -114,10 +138,20 @@ jobs:
           unzip -q gradle-8.5-bin.zip
           export PATH=$PWD/gradle-8.5/bin:$PATH
           gradle --version
-          gradle assembleRelease --no-daemon || gradle assembleDebug --no-daemon
+          gradle assembleRelease --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: arnis-mobile-apk
           path: android/app/build/outputs/apk/**/*.apk
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Arnis Mobile v1.0.${{ github.run_number }}"
+          body: "Автоматически собранный Android APK с поддержкой подписей v1/v2."
+          files: android/app/build/outputs/apk/release/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
