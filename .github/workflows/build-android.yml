@@ -40,13 +40,11 @@ jobs:
           mkdir -p android/app/src/main/java/com/arnis/app
           mkdir -p android/app/src/main/res
 
-          # Классический settings.gradle, совместимый со всеми версиями Gradle
           cat << 'EOF' > android/settings.gradle
           rootProject.name = "ArnisMobile"
           include ':app'
           EOF
 
-          # Корневой build.gradle со старым блоком buildscript (избегает ошибок конфигурации)
           cat << 'EOF' > android/build.gradle
           buildscript {
               repositories {
@@ -68,7 +66,6 @@ jobs:
           }
           EOF
 
-          # build.gradle для модуля app
           cat << 'EOF' > android/app/build.gradle
           plugins {
               id 'com.android.application'
@@ -97,7 +94,6 @@ jobs:
           }
           EOF
 
-          # Минимальный AndroidManifest.xml
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.arnis.app">
@@ -111,19 +107,14 @@ jobs:
           </manifest>
           EOF
 
-      - name: Install Gradle & Setup Wrapper 8.5
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gradle
-          cd android
-          gradle wrapper --gradle-version 8.5 --distribution-type bin
-          chmod +x gradlew
-          cat gradle/wrapper/gradle-wrapper.properties
-
-      - name: Build Android APK with Gradle
+      - name: Setup & Run Gradle 8.5 Manually
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon || ./gradlew assembleDebug --no-daemon
+          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          unzip -q gradle-8.5-bin.zip
+          export PATH=$PWD/gradle-8.5/bin:$PATH
+          gradle --version
+          gradle assembleRelease --no-daemon || gradle assembleDebug --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
