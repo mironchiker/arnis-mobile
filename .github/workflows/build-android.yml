@@ -1,75 +1,31 @@
-name: Build Android APK (Manual)
-
-on:
-  workflow_dispatch: # Запуск только вручную по кнопке в Actions
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26b
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      - name: Build Rust JNI Library (.so)
-        run: |
-          mkdir -p ./android/app/src/main/jniLibs/arm64-v8a
-          cargo ndk -t arm64-v8a -o ./android/app/src/main/jniLibs build --release --no-default-features
-
       - name: Setup Complete Android Project Structure
         run: |
           # Создаем корректную структуру папок Android-проекта внутри android/
           mkdir -p android/app/src/main/java/com/arnis/app
           mkdir -p android/app/src/main/res
 
-          # Переносим NativeBridge.kt в правильное место, если он был в другом
-          if [ -f "android/app/src/main/java/com/arnis/app/NativeBridge.kt" ]; then
-            echo "NativeBridge.kt is already in place."
-          fi
-
-          # Создаем settings.gradle в папке android
+          # Создаем settings.gradle (упрощенный, совместимый с любым Gradle)
           cat << 'EOF' > android/settings.gradle
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
           rootProject.name = "ArnisMobile"
           include ':app'
           EOF
 
-          # Создаем корневой build.gradle в папке android
+          # Создаем корневой build.gradle с репозиториями (подходит для Gradle 4.x - 8.x)
           cat << 'EOF' > android/build.gradle
-          plugins {
-              id 'com.android.application' version '8.1.4' apply false
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.1.4'
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
           }
           task clean(type: Delete) {
               delete rootProject.buildDir
@@ -118,22 +74,3 @@ jobs:
               </application>
           </manifest>
           EOF
-
-      - name: Install Gradle & Generate Wrapper
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gradle
-          cd android
-          gradle wrapper --gradle-version 8.5
-          chmod +x gradlew
-
-      - name: Build Android APK with Gradle
-        run: |
-          cd android
-          ./gradlew assembleRelease --no-daemon || ./gradlew assembleDebug --no-daemon
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: arnis-mobile-apk
-          path: android/app/build/outputs/apk/**/*.apk
