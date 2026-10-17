@@ -1,7 +1,5 @@
 pub mod android_bridge;
-pub mod version_adapter;
 
-// Экспорт модулей оригинального Arnis
 pub mod args;
 pub mod block;
 pub mod coordinate_system;
