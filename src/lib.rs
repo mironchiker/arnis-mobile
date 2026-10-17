@@ -1,3 +1,12 @@
+// [Context: Android cdylib, aarch64-linux-android, Rust 2021 edition]
+// lib.rs — единственный pub mod на каждый модуль (без дублей)
+//
+// Дублирование было причиной E0428 "defined multiple times".
+// Этот файл = прямой порт mod-секции из main.rs, адаптированный для cdylib:
+//   - gui/tauri/telemetry/preview_3d под cfg(feature = "gui") — не нужны для APK
+//   - progress подключается unconditionally (cfg(not(feature="gui")) стубы уже внутри него)
+//   - mimalloc ставим как global_allocator — тот же что в main.rs, нужен для rayon throughput
+
 pub mod android_bridge;
 
 pub mod args;
@@ -46,12 +55,10 @@ pub mod ore_generation;
 pub mod osm_parser;
 pub mod osm_tiles;
 pub mod overture;
-pub mod preview_3d;
-pub mod progress;
 pub mod projection;
+pub mod progress;
 pub mod retrieve_data;
 pub mod structures;
-pub mod telemetry;
 pub mod terrain_surface;
 #[cfg(test)]
 pub mod test_utilities;
@@ -62,3 +69,16 @@ pub mod voxy;
 pub mod water_depth;
 pub mod world_editor;
 pub mod world_utils;
+
+// GUI-only модули подключаем только если фича включена
+// (для APK они никогда не включаются — cargo ndk передаёт --no-default-features)
+#[cfg(feature = "gui")]
+pub mod preview_3d;
+#[cfg(feature = "gui")]
+pub mod telemetry;
+
+// mimalloc: тот же аллокатор что в main.rs.
+// Под Android system malloc + rayon thread pool = heap fragmentation после ~5 мин генерации.
+// mimalloc держит per-thread arenas и не лочит global heap на каждый alloc.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
