@@ -111,13 +111,14 @@ jobs:
           </manifest>
           EOF
 
-      - name: Install Gradle & Generate Wrapper
+      - name: Install Gradle & Setup Wrapper 8.5
         run: |
           sudo apt-get update
           sudo apt-get install -y gradle
           cd android
-          gradle wrapper --gradle-version 8.5
+          gradle wrapper --gradle-version 8.5 --distribution-type bin
           chmod +x gradlew
+          cat gradle/wrapper/gradle-wrapper.properties
 
       - name: Build Android APK with Gradle
         run: |
