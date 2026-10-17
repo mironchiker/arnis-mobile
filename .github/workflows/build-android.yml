@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Java 17 (нужен для Gradle + keytool) ───────────────────────────
+      # ── 2. Java 17 ────────────────────────────────────────────────────────
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -29,17 +29,13 @@ jobs:
           ndk-version: r26b
           add-to-path: true
 
-      # ── 4. Android SDK build-tools ────────────────────────────────────────
-      - name: Set up Android SDK build-tools
-        uses: android-actions/setup-android@v3
-
-      # ── 5. Rust stable + aarch64 target ───────────────────────────────────
+      # ── 4. Rust stable + aarch64 target ───────────────────────────────────
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
-      # ── 6. кэшируем cargo ─────────────────────────────────────────────────
+      # ── 5. кэшируем cargo ─────────────────────────────────────────────────
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -51,11 +47,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-android-
 
-      # ── 7. cargo-ndk ──────────────────────────────────────────────────────
+      # ── 6. cargo-ndk ──────────────────────────────────────────────────────
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      # ── 8. собираем libарnis_mobile.so ────────────────────────────────────
+      # ── 7. собираем libарnis_mobile.so ────────────────────────────────────
       - name: Build Rust JNI library (.so)
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -69,7 +65,7 @@ jobs:
           echo "Built .so:"
           ls -lh android/app/src/main/jniLibs/arm64-v8a/
 
-      # ── 9. Android project structure ───────────────────────────────────────
+      # ── 8. Android project structure ───────────────────────────────────────
       - name: Generate Android project files
         run: |
           set -euo pipefail
@@ -174,7 +170,7 @@ jobs:
           </resources>
           XML
 
-      # ── 10. keystore ──────────────────────────────────────────────────────
+      # ── 9. keystore ───────────────────────────────────────────────────────
       - name: Generate debug keystore
         run: |
           keytool \
@@ -187,8 +183,10 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      # ── 11. Gradle 8.5 + assembleRelease ──────────────────────────────────
+      # ── 10. Gradle 8.5 + assembleRelease ──────────────────────────────────
       - name: Build APK with Gradle
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
           cd android
           wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip -O gradle.zip
@@ -197,7 +195,7 @@ jobs:
           gradle --version
           gradle assembleRelease --no-daemon --stacktrace
 
-      # ── 12. verify ────────────────────────────────────────────────────────
+      # ── 11. verify ────────────────────────────────────────────────────────
       - name: Verify APK
         run: |
           APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
@@ -208,7 +206,7 @@ jobs:
           fi
           ls -lh "$APK_PATH"
 
-      # ── 13. upload artifact ───────────────────────────────────────────────
+      # ── 12. upload artifact ───────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -216,7 +214,7 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      # ── 14. GitHub Release ────────────────────────────────────────────────
+      # ── 13. GitHub Release ────────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
