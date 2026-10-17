@@ -2,7 +2,6 @@
 name = "arnis"
 version = "3.3.0"
 edition = "2021"
-# Cargo only auto-detects a root build.rs, so the moved path has to be declared.
 build = "src/build.rs"
 description = "Arnis - Generate real life cities in Minecraft"
 homepage = "https://github.com/louis-e/arnis"
@@ -89,7 +88,5 @@ tempfile = "3.26.0"
 name = "refresh_wikidata_index"
 path = "assets/refresh_wikidata_index.rs"
 
-# Freeze nbtx at the last pre-`NbtError`-rename commit; the pinned
-# bedrockrs_proto_core leaves it unpinned so cargo update would break it.
 [patch."https://github.com/bedrock-crustaceans/nbtx"]
 nbtx = { git = "https://github.com/louis-e/nbtx", rev = "551c38ac74f2e68a07d3dbdd354faac0c0ac966e" }
