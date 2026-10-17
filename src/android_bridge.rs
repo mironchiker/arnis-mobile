@@ -12,7 +12,7 @@
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::jboolean;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // Глобальный флаг отмены — записывается из cancelGeneration(), читается из тредов rayon
@@ -119,6 +119,15 @@ fn build_android_args(
         building_facades: false,
         facade_detail: FacadeDetail::Standard,
         facade_px: 512,
+
+        // ── твои кастомные поля (forked arnis) ───────────────────────────
+        body_gravity: false,
+        building_facades_dir: None,
+        discoveries: false,
+        moving_cars: false,
+        pause_menu: false,
+        traffic_lights: false,
+        zombie_outbreak: false,
     }
 }
 
@@ -149,7 +158,7 @@ pub extern "system" fn Java_com_arnis_app_NativeBridge_generateWorld(
     output_path: JString,
 ) -> jboolean {
     // ── 1. распаковываем JString → Rust String ────────────────────────────
-    let version_str: String = match env.get_string(&version) {
+    let _version_str: String = match env.get_string(&version) {
         Ok(s) => s.into(),
         Err(e) => {
             eprintln!("[arnis-bridge] get_string(version) failed: {e}");
