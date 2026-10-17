@@ -1,7 +1,7 @@
-use crate::version_adapter::TargetVersionConfig;
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::jboolean;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
 use std::time::Duration;
@@ -15,7 +15,6 @@ pub const OVERPASS_ENDPOINTS: &[&str] = &[
     "https://overpass.private.coffee/api/interpreter",
 ];
 
-/// Разбивает неограниченную выбранную область на тайлы ~500x500м, чтобы Overpass не выдавал 429/504
 pub fn split_bounding_box(
     min_lat: f64,
     min_lon: f64,
@@ -38,7 +37,44 @@ pub fn split_bounding_box(
     tiles
 }
 
-/// Выполняет POST-запрос к пулу зеркал Overpass с автоматическим переключением при ошибке
+pub fn parse_bedrock_version(version_str: &str) -> [i32; 5] {
+    let mut result = [0i32; 5];
+    let parts: Vec<i32> = version_str
+        .trim()
+        .split('.')
+        .filter_map(|s| s.parse::<i32>().ok())
+        .collect();
+
+    for (i, &val) in parts.iter().take(5).enumerate() {
+        result[i] = val;
+    }
+    result
+}
+
+pub fn parse_java_data_version(version_str: &str) -> i32 {
+    let parts: Vec<i32> = version_str
+        .trim()
+        .split('.')
+        .filter_map(|s| s.parse::<i32>().ok())
+        .collect();
+
+    if let Some(&major) = parts.first() {
+        if major >= 26 {
+            let minor = parts.get(1).copied().unwrap_or(0);
+            return 4500 + (minor * 10);
+        }
+        if major == 1 && parts.get(1).copied().unwrap_or(0) == 21 {
+            let patch = parts.get(2).copied().unwrap_or(0);
+            return 3953 + patch;
+        }
+        if major == 1 && parts.get(1).copied().unwrap_or(0) == 20 {
+            let patch = parts.get(2).copied().unwrap_or(0);
+            return 3463 + patch;
+        }
+    }
+    3953
+}
+
 pub fn fetch_overpass_query_with_failover(query: &str) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -65,7 +101,7 @@ pub fn fetch_overpass_query_with_failover(query: &str) -> Result<String, String>
             }
         }
     }
-    Err("Все публичные сервера Overpass API недоступны".to_string())
+    Err("Все доступные публичные зеркала Overpass API недоступны".to_string())
 }
 
 #[no_mangle]
@@ -89,28 +125,24 @@ pub extern "system" fn Java_com_arnis_app_NativeBridge_generateWorld(
         Err(_) => return 0,
     };
 
-    let target_config = TargetVersionConfig::new(is_bedrock != 0, version_str);
+    let is_bedrock_bool = is_bedrock != 0;
     CANCEL_FLAG.store(false, Ordering::SeqCst);
 
-    // Сетка тайлов без ограничения по площади
-    let tiles = split_bounding_box(min_lat, min_lon, max_lat, max_lon, 0.005);
-    let out_dir = std::path::Path::new(&out_path_str);
-
-    if !out_dir.exists() {
-        if std::fs::create_dir_all(out_dir).is_err() {
-            return 0;
-        }
+    let out_dir = Path::new(&out_path_str);
+    if !out_dir.exists() && std::fs::create_dir_all(out_dir).is_err() {
+        return 0;
     }
 
-    // Применение метаданных версии для Bedrock / Java
-    if target_config.is_bedrock {
-        let version_arr = target_config.to_bedrock_version_array();
+    if is_bedrock_bool {
+        let version_arr = parse_bedrock_version(&version_str);
         let _ = std::fs::write(out_dir.join("levelname.txt"), b"Arnis Android World");
         let _ = std::fs::write(out_dir.join("bedrock_version.txt"), format!("{:?}", version_arr));
     } else {
-        let data_version = target_config.to_java_data_version();
+        let data_version = parse_java_data_version(&version_str);
         let _ = std::fs::write(out_dir.join("data_version.txt"), format!("{}", data_version));
     }
+
+    let tiles = split_bounding_box(min_lat, min_lon, max_lat, max_lon, 0.005);
 
     for tile in tiles {
         if CANCEL_FLAG.load(Ordering::SeqCst) {
