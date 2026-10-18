@@ -48,7 +48,7 @@ fn run_generation_file(
 
     let mut args = crate::args::Args {
         bbox: None,
-        file: Some(osm_file_path.clone()),
+        file: Some(osm_path_str.clone()), // ← String не PathBuf
         save_json_file: None,
         path: Some(out_dir.clone()),
         bedrock: is_bedrock_bool,
@@ -116,14 +116,17 @@ fn run_generation_file(
     };
 
     eprintln!("[arnis-bridge] reading osm file: {osm_path_str}");
-    let (raw_osm, file_bounds) = match crate::retrieve_data::fetch_data_from_file(&osm_file_path) {
+
+    // fetch_data_from_file принимает &str
+    let (raw_osm, file_bounds) = match crate::retrieve_data::fetch_data_from_file(&osm_path_str) {
         Ok(d) => d,
         Err(e) => { eprintln!("[arnis-bridge] fetch_data_from_file failed: {e}"); return 0; }
     };
 
+    // resolve_bbox возвращает Option<LLBBox> не Result
     let llbbox = match crate::osm_parser::resolve_bbox(args.bbox, file_bounds, &raw_osm) {
-        Ok(b) => b,
-        Err(e) => { eprintln!("[arnis-bridge] resolve_bbox failed: {e}"); return 0; }
+        Some(b) => b,
+        None => { eprintln!("[arnis-bridge] resolve_bbox returned None"); return 0; }
     };
     args.bbox = Some(llbbox);
 
