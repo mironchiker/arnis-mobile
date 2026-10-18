@@ -87,6 +87,7 @@ jobs:
           import android.content.Intent
           import android.net.Uri
           import android.os.Bundle
+          import android.os.Environment
           import android.provider.OpenableColumns
           import android.graphics.Color
           import android.graphics.Typeface
@@ -94,6 +95,7 @@ jobs:
           import android.view.Gravity
           import android.view.View
           import android.view.ViewGroup
+          import android.webkit.*
           import android.widget.*
           import java.io.File
           import java.io.FileOutputStream
@@ -114,8 +116,18 @@ jobs:
               private lateinit var javaButton: Button
               private lateinit var bedrockButton: Button
               private lateinit var fileNameText: TextView
+              private lateinit var tabFile: Button
+              private lateinit var tabMap: Button
+              private lateinit var filePanelView: LinearLayout
+              private lateinit var mapPanelView: LinearLayout
+              private lateinit var webView: WebView
+              private lateinit var clearButton: Button
               private var bedrock = false
               private var osmFilePath: String? = null
+              private var useMap = false
+              private var minLat = 0.0; private var minLon = 0.0
+              private var maxLat = 0.0; private var maxLon = 0.0
+              private var hasSelection = false
 
               companion object {
                   const val PICK_OSM_FILE = 1001
@@ -134,6 +146,15 @@ jobs:
                       val uri = data?.data ?: return
                       copyOsmFile(uri)
                   }
+              }
+
+              private fun getOutputDir(): File {
+                  val downloads = Environment.getExternalStoragePublicDirectory(
+                      Environment.DIRECTORY_DOWNLOADS
+                  )
+                  val dir = File(downloads, "ArnisWorlds")
+                  dir.mkdirs()
+                  return dir
               }
 
               private fun copyOsmFile(uri: Uri) {
@@ -164,60 +185,72 @@ jobs:
               }
 
               private fun buildUi() {
-                  val scroll = ScrollView(this).apply { setBackgroundColor(bg) }
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(dp(20), dp(18), dp(20), dp(24))
                       setBackgroundColor(bg)
                   }
-                  scroll.addView(root)
 
                   // ── шапка ──────────────────────────────────────────────
-                  val brand = LinearLayout(this).apply {
+                  val header = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(16), dp(12), dp(16), dp(8))
+                      setBackgroundColor(bg)
                   }
                   val logo = TextView(this).apply {
-                      text = "A"; textSize = 30f; setTextColor(bg)
+                      text = "A"; textSize = 22f; setTextColor(bg)
                       gravity = Gravity.CENTER; typeface = Typeface.DEFAULT_BOLD
-                      background = shape(yellow, 14)
+                      background = shape(yellow, 10)
                   }
-                  brand.addView(logo, LinearLayout.LayoutParams(dp(54), dp(54)))
-                  val titleCol = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0)
+                  header.addView(logo, LinearLayout.LayoutParams(dp(40), dp(40)))
+                  val titles = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0)
                   }
-                  titleCol.addView(label("ARNIS", 25f, fgColor, true))
-                  titleCol.addView(label("REAL WORLD → MINECRAFT", 10f, yellow, true))
-                  brand.addView(titleCol)
-                  root.addView(brand)
-                  root.addView(space(22))
+                  titles.addView(label("ARNIS", 16f, fgColor, true))
+                  titles.addView(label("Real World → Minecraft", 10f, yellow, true))
+                  header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  root.addView(header)
 
-                  root.addView(label("Создай свой мир", 26f, fgColor, true))
-                  root.addView(label(
-                      "Скачай .osm файл с openstreetmap.org → Export и загрузи его сюда.",
-                      14f, muted, false
-                  ).apply { setPadding(0, dp(7), 0, 0) })
-                  root.addView(space(20))
+                  // ── табы источника ─────────────────────────────────────
+                  val tabRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(dp(16), dp(4), dp(16), dp(8))
+                  }
+                  tabFile = Button(this).apply {
+                      text = "📄 Файл .osm"; textSize = 13f; isAllCaps = false
+                      setOnClickListener { switchTab(false) }
+                  }
+                  tabMap = Button(this).apply {
+                      text = "🗺 Карта"; textSize = 13f; isAllCaps = false
+                      setOnClickListener { switchTab(true) }
+                  }
+                  tabRow.addView(tabFile, LinearLayout.LayoutParams(0, dp(40), 1f))
+                  tabRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(8), 1) })
+                  tabRow.addView(tabMap, LinearLayout.LayoutParams(0, dp(40), 1f))
+                  root.addView(tabRow)
 
-                  // ── шаг 1: инструкция ──────────────────────────────────
+                  // ── панель файла ───────────────────────────────────────
+                  filePanelView = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(4), dp(16), dp(8))
+                  }
                   val step1 = card()
-                  step1.addView(label("01  ·  КАК СКАЧАТЬ КАРТУ", 13f, yellow, true))
+                  step1.addView(label("КАК СКАЧАТЬ КАРТУ", 12f, yellow, true))
                   step1.addView(label(
-                      "1. Открой openstreetmap.org\n2. Найди нужное место\n3. Нажми Export сверху\n4. Выбери область и нажми Export\n5. Скачается файл map.osm",
+                      "1. Открой openstreetmap.org\n2. Найди место\n3. Нажми Экспорт сверху\n4. Выбери область → Экспорт\n5. Скачается map.osm",
                       13f, fgColor, false
-                  ).apply { setPadding(0, dp(9), 0, 0) })
-                  root.addView(step1)
-                  root.addView(space(14))
+                  ).apply { setPadding(0, dp(6), 0, 0) })
+                  filePanelView.addView(step1)
+                  filePanelView.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(10)) })
 
-                  // ── шаг 2: выбор файла ─────────────────────────────────
                   val step2 = card()
-                  step2.addView(label("02  ·  ФАЙЛ КАРТЫ (.osm)", 13f, yellow, true))
+                  step2.addView(label("ФАЙЛ КАРТЫ (.osm / .osm.xml)", 12f, yellow, true))
                   fileNameText = label("Файл не выбран", 14f, muted, false).apply {
-                      setPadding(0, dp(8), 0, dp(10))
+                      setPadding(0, dp(6), 0, dp(8))
                   }
                   step2.addView(fileNameText)
                   val pickBtn = Button(this).apply {
-                      text = "Выбрать .osm файл"
+                      text = "Выбрать файл"
                       textSize = 14f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD
                       setTextColor(fgColor); background = shape(fieldBg, 10)
                       setOnClickListener {
@@ -229,76 +262,124 @@ jobs:
                       }
                   }
                   step2.addView(pickBtn, LinearLayout.LayoutParams(-1, dp(46)))
-                  root.addView(step2)
-                  root.addView(space(14))
+                  filePanelView.addView(step2)
+                  root.addView(filePanelView)
 
-                  // ── шаг 3: формат ──────────────────────────────────────
-                  val step3 = card()
-                  step3.addView(label("03  ·  ВЕРСИЯ MINECRAFT", 13f, yellow, true))
-                  step3.addView(label("Выбери формат мира", 16f, fgColor, true).apply {
-                      setPadding(0, dp(8), 0, dp(10))
-                  })
-                  val formatRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                  javaButton = smallButton("Java Edition") { setEdition(false) }
-                  bedrockButton = smallButton("Bedrock") { setEdition(true) }
-                  formatRow.addView(javaButton, LinearLayout.LayoutParams(0, dp(46), 1f))
-                  formatRow.addView(spaceH(8))
-                  formatRow.addView(bedrockButton, LinearLayout.LayoutParams(0, dp(46), 1f))
-                  step3.addView(formatRow)
-                  root.addView(step3)
-                  root.addView(space(20))
+                  // ── панель карты ───────────────────────────────────────
+                  mapPanelView = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      visibility = View.GONE
+                  }
+                  webView = WebView(this).apply {
+                      settings.javaScriptEnabled = true
+                      settings.domStorageEnabled = true
+                      settings.builtInZoomControls = true
+                      settings.displayZoomControls = false
+                      addJavascriptInterface(MapBridge(), "Android")
+                      webViewClient = WebViewClient()
+                  }
+                  mapPanelView.addView(webView, LinearLayout.LayoutParams(-1, 0, 1f))
+                  clearButton = Button(this).apply {
+                      text = "Очистить территорию"
+                      textSize = 13f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD
+                      setTextColor(Color.WHITE); background = shape(red, 0)
+                      visibility = View.GONE
+                      setOnClickListener { clearSelection() }
+                  }
+                  mapPanelView.addView(clearButton, LinearLayout.LayoutParams(-1, dp(46)))
+                  root.addView(mapPanelView, LinearLayout.LayoutParams(-1, 0, 1f))
+
+                  // ── выбор формата ──────────────────────────────────────
+                  val formatRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(dp(16), dp(6), dp(16), dp(6))
+                  }
+                  javaButton = toggleBtn("Java Edition") { setEdition(false) }
+                  bedrockButton = toggleBtn("Bedrock") { setEdition(true) }
+                  formatRow.addView(javaButton, LinearLayout.LayoutParams(0, dp(38), 1f))
+                  formatRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(8), 1) })
+                  formatRow.addView(bedrockButton, LinearLayout.LayoutParams(0, dp(38), 1f))
+                  root.addView(formatRow)
 
                   // ── кнопка генерации ───────────────────────────────────
                   generateButton = Button(this).apply {
                       text = "СОЗДАТЬ МИР  →"
                       textSize = 15f; typeface = Typeface.DEFAULT_BOLD; isAllCaps = false
-                      setTextColor(Color.rgb(25, 25, 25)); background = shape(yellow, 14)
+                      setTextColor(Color.rgb(25, 25, 25)); background = shape(yellow, 0)
                       setOnClickListener { startGeneration() }
                   }
                   root.addView(generateButton, LinearLayout.LayoutParams(-1, dp(56)))
-                  root.addView(space(14))
 
                   // ── статус ─────────────────────────────────────────────
-                  val statusCard = card()
-                  statusCard.addView(label("СТАТУС", 11f, yellow, true))
-                  status = label("Загрузи .osm файл и нажми СОЗДАТЬ МИР.", 13f, muted, false)
-                  status.setPadding(0, dp(8), 0, 0)
+                  val statusCard = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(8), dp(16), dp(10))
+                      setBackgroundColor(panel)
+                  }
+                  status = label("Выбери источник данных и нажми СОЗДАТЬ МИР.", 13f, muted, false)
                   statusCard.addView(status)
                   root.addView(statusCard)
-                  root.addView(space(14))
-                  root.addView(label(
-                      "Arnis · OpenStreetMap → Minecraft", 11f, muted, false
-                  ).apply { gravity = Gravity.CENTER })
 
-                  setContentView(scroll)
+                  setContentView(root)
                   setEdition(false)
+                  switchTab(false)
+                  webView.loadDataWithBaseURL("https://unpkg.com", mapHtml(), "text/html", "UTF-8", null)
+              }
+
+              private fun switchTab(map: Boolean) {
+                  useMap = map
+                  filePanelView.visibility = if (map) View.GONE else View.VISIBLE
+                  mapPanelView.visibility = if (map) View.VISIBLE else View.GONE
+                  styleToggle(tabFile, !map)
+                  styleToggle(tabMap, map)
+              }
+
+              private fun clearSelection() {
+                  hasSelection = false
+                  clearButton.visibility = View.GONE
+                  status.text = "Тапни две точки на карте чтобы выделить область"
+                  status.setTextColor(muted)
+                  webView.evaluateJavascript("clearSelection();", null)
               }
 
               private fun startGeneration() {
+                  val outDir = getOutputDir()
+                  val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                  val out = File(outDir, "Arnis_$stamp")
+                  out.mkdirs()
+
+                  if (useMap) {
+                      if (!hasSelection) {
+                          status.text = "Сначала выдели область на карте!"
+                          status.setTextColor(red)
+                          return
+                      }
+                      // для карты нужен временный osm файл — качаем через Overpass
+                      status.text = "Карта: функция в разработке, используй файл 😭"
+                      status.setTextColor(red)
+                      return
+                  }
+
                   val path = osmFilePath
                   if (path == null) {
                       status.text = "Сначала выбери .osm файл!"
                       status.setTextColor(red)
                       return
                   }
+
                   generateButton.isEnabled = false
                   generateButton.text = "ГЕНЕРАЦИЯ…"
                   status.setTextColor(muted)
-                  status.text = "Генерируем мир из файла. Это займёт несколько минут…"
+                  status.text = "Генерируем мир… Мир будет в Загрузки/ArnisWorlds/"
+
                   Thread {
                       var success = false
                       var msg = ""
                       try {
-                          val base = getExternalFilesDir(null) ?: filesDir
-                          val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                          val out = File(base, "ArnisWorlds/Arnis_$stamp")
-                          out.mkdirs()
                           success = NativeBridge.generateWorldFromFile(
-                              path,
-                              bedrock,
-                              out.absolutePath
+                              path, bedrock, out.absolutePath
                           )
-                          msg = if (success) "✓ Мир создан:\n${out.absolutePath}"
+                          msg = if (success) "✓ Мир создан!\nЗагрузки/ArnisWorlds/${out.name}"
                           else "Генерация не завершилась. Попробуй меньшую область."
                       } catch (t: Throwable) {
                           msg = "Ошибка: ${t.javaClass.simpleName}: ${t.message ?: "?"}"
@@ -315,29 +396,116 @@ jobs:
 
               private fun setEdition(isBedrock: Boolean) {
                   bedrock = isBedrock
-                  styleChoice(javaButton, !isBedrock)
-                  styleChoice(bedrockButton, isBedrock)
+                  styleToggle(javaButton, !isBedrock)
+                  styleToggle(bedrockButton, isBedrock)
               }
 
-              private fun styleChoice(b: Button, selected: Boolean) {
-                  b.background = shape(if (selected) yellow else Color.rgb(27, 27, 27), 10)
+              private fun styleToggle(b: Button, selected: Boolean) {
+                  b.background = shape(if (selected) yellow else fieldBg, 10)
                   b.setTextColor(if (selected) Color.rgb(25, 25, 25) else fgColor)
               }
 
-              private fun smallButton(caption: String, action: () -> Unit) = Button(this).apply {
-                  text = caption; textSize = 12f; isAllCaps = false
-                  setTextColor(fgColor); background = shape(Color.rgb(27, 27, 27), 10)
-                  setPadding(dp(4), dp(4), dp(4), dp(4))
+              inner class MapBridge {
+                  @JavascriptInterface
+                  fun onBboxSelected(lat1: Double, lon1: Double, lat2: Double, lon2: Double) {
+                      minLat = minOf(lat1, lat2); maxLat = maxOf(lat1, lat2)
+                      minLon = minOf(lon1, lon2); maxLon = maxOf(lon1, lon2)
+                      hasSelection = true
+                      runOnUiThread {
+                          clearButton.visibility = View.VISIBLE
+                          status.text = "Область: %.4f,%.4f → %.4f,%.4f".format(minLat, minLon, maxLat, maxLon)
+                          status.setTextColor(yellow)
+                      }
+                  }
+              }
+
+              private fun mapHtml() = """
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <style>
+          * { margin:0; padding:0; box-sizing:border-box; }
+          html,body,#map { width:100%; height:100%; background:#232323; }
+          #searchbox {
+              position:absolute; top:10px; left:50%; transform:translateX(-50%);
+              z-index:1000; display:flex; gap:6px; width:90%;
+          }
+          #searchbox input {
+              flex:1; padding:8px 12px; border-radius:8px; border:none;
+              background:#1b1b1b; color:#f5f5f5; font-size:14px; outline:none;
+          }
+          #searchbox button {
+              padding:8px 14px; border-radius:8px; border:none;
+              background:#fecc44; color:#191919; font-weight:bold; font-size:13px;
+          }
+          #hint {
+              position:absolute; bottom:10px; left:50%; transform:translateX(-50%);
+              z-index:1000; background:rgba(35,35,35,0.85); color:#b4b4b4;
+              padding:6px 14px; border-radius:20px; font-size:12px; pointer-events:none;
+          }
+          </style>
+          </head>
+          <body>
+          <div id="searchbox">
+              <input id="q" type="text" placeholder="Поиск места…"/>
+              <button onclick="search()">Найти</button>
+          </div>
+          <div id="map"></div>
+          <div id="hint">Тапни 1-ю точку</div>
+          <script>
+          var map=L.map('map').setView([51.505,-0.09],13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(map);
+          var pt1=null,pt2=null,rect=null;
+          var hint=document.getElementById('hint');
+          function clearSelection(){
+              pt1=null;pt2=null;
+              if(rect){map.removeLayer(rect);rect=null;}
+              hint.textContent='Тапни 1-ю точку';
+          }
+          map.on('click',function(e){
+              if(!pt1){
+                  pt1=e.latlng;
+                  hint.textContent='Тапни 2-ю точку';
+              } else {
+                  pt2=e.latlng;
+                  if(rect)map.removeLayer(rect);
+                  var bounds=L.latLngBounds(pt1,pt2);
+                  rect=L.rectangle(bounds,{color:'#fecc44',weight:2,fillColor:'#fecc44',fillOpacity:0.18}).addTo(map);
+                  hint.textContent='Область выделена ✓';
+                  Android.onBboxSelected(pt1.lat,pt1.lng,pt2.lat,pt2.lng);
+                  pt1=null;pt2=null;
+              }
+          });
+          function search(){
+              var q=document.getElementById('q').value.trim();
+              if(!q)return;
+              fetch('https://nominatim.openstreetmap.org/search?format=json&q='+encodeURIComponent(q))
+                  .then(r=>r.json())
+                  .then(data=>{
+                      if(data.length>0)map.setView([parseFloat(data[0].lat),parseFloat(data[0].lon)],15);
+                      else hint.textContent='Место не найдено';
+                  });
+          }
+          document.getElementById('q').addEventListener('keydown',function(e){if(e.key==='Enter')search();});
+          </script>
+          </body>
+          </html>
+              """.trimIndent()
+
+              private fun toggleBtn(caption: String, action: () -> Unit) = Button(this).apply {
+                  text = caption; textSize = 13f; isAllCaps = false
+                  setTextColor(fgColor); background = shape(fieldBg, 10)
                   setOnClickListener { action() }
               }
 
               private fun card() = LinearLayout(this).apply {
                   orientation = LinearLayout.VERTICAL
-                  setPadding(dp(15), dp(15), dp(15), dp(15))
-                  background = shape(panel, 14)
-                  layoutParams = LinearLayout.LayoutParams(
-                      -1, ViewGroup.LayoutParams.WRAP_CONTENT
-                  ).apply { bottomMargin = dp(2) }
+                  setPadding(dp(14), dp(14), dp(14), dp(14))
+                  background = shape(panel, 12)
+                  layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
               }
 
               private fun label(value: String, size: Float, color: Int, bold: Boolean) =
@@ -350,12 +518,6 @@ jobs:
                   setColor(color); cornerRadius = dp(radius).toFloat()
               }
 
-              private fun space(h: Int) = View(this).apply {
-                  layoutParams = LinearLayout.LayoutParams(1, dp(h))
-              }
-              private fun spaceH(w: Int) = View(this).apply {
-                  layoutParams = LinearLayout.LayoutParams(dp(w), 1)
-              }
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
           }
           KT
