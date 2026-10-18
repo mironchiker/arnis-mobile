@@ -10,18 +10,15 @@ jobs:
       contents: write
 
     steps:
-      # ── 1. checkout ────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Java 17 ────────────────────────────────────────────────────────
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ── 3. Android NDK r26b ───────────────────────────────────────────────
       - name: Set up Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -29,13 +26,11 @@ jobs:
           ndk-version: r26b
           add-to-path: true
 
-      # ── 4. Rust stable + aarch64 target ───────────────────────────────────
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
 
-      # ── 5. кэшируем cargo ─────────────────────────────────────────────────
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -47,11 +42,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-android-
 
-      # ── 6. cargo-ndk ──────────────────────────────────────────────────────
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      # ── 7. собираем libarnis_mobile.so ────────────────────────────────────
       - name: Build Rust JNI library (.so)
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -65,7 +58,6 @@ jobs:
           echo "Built .so:"
           ls -lh android/app/src/main/jniLibs/arm64-v8a/
 
-      # ── 8. создаём Kotlin исходники ───────────────────────────────────────
       - name: Create Kotlin sources
         run: |
           mkdir -p android/app/src/main/java/com/arnis/app
@@ -98,13 +90,13 @@ jobs:
           import android.app.Activity
           import android.os.Bundle
           import android.graphics.Color
-          import android.graphics.Typeface
-          import android.graphics.drawable.GradientDrawable
-          import android.view.Gravity
           import android.view.View
           import android.view.ViewGroup
           import android.widget.*
-          import android.text.InputType
+          import android.webkit.*
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.view.Gravity
           import java.io.File
           import java.text.SimpleDateFormat
           import java.util.Date
@@ -113,194 +105,267 @@ jobs:
           class MainActivity : Activity() {
               private val bg = Color.rgb(35, 35, 35)
               private val panel = Color.rgb(48, 48, 48)
-              private val fieldBg = Color.rgb(27, 27, 27)
               private val yellow = Color.rgb(254, 204, 68)
               private val fgColor = Color.rgb(245, 245, 245)
               private val muted = Color.rgb(180, 180, 180)
-              private lateinit var minLat: EditText
-              private lateinit var minLon: EditText
-              private lateinit var maxLat: EditText
-              private lateinit var maxLon: EditText
+              private val red = Color.rgb(255, 80, 80)
+              private lateinit var webView: WebView
               private lateinit var generateButton: Button
+              private lateinit var clearButton: Button
               private lateinit var status: TextView
               private lateinit var javaButton: Button
               private lateinit var bedrockButton: Button
               private var bedrock = false
+              private var minLat = 0.0; private var minLon = 0.0
+              private var maxLat = 0.0; private var maxLon = 0.0
+              private var hasSelection = false
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   window.statusBarColor = bg
                   window.navigationBarColor = bg
-                  window.decorView.systemUiVisibility = 0
                   buildUi()
               }
 
               private fun buildUi() {
-                  val scroll = ScrollView(this).apply { setBackgroundColor(bg); clipToPadding = false }
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(dp(20), dp(18), dp(20), dp(24))
                       setBackgroundColor(bg)
                   }
-                  scroll.addView(root)
 
-                  val brand = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                  val logo = TextView(this).apply {
-                      text = "A"; textSize = 30f; setTextColor(bg)
-                      gravity = Gravity.CENTER; typeface = Typeface.DEFAULT_BOLD; background = shape(yellow, 14)
+                  val header = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(16), dp(12), dp(16), dp(12))
+                      setBackgroundColor(bg)
                   }
-                  brand.addView(logo, LinearLayout.LayoutParams(dp(54), dp(54)))
-                  val titleColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(13), 0, 0, 0) }
-                  titleColumn.addView(label("ARNIS", 25f, fgColor, true))
-                  titleColumn.addView(label("REAL WORLD → MINECRAFT", 10f, yellow, true))
-                  brand.addView(titleColumn)
-                  root.addView(brand)
-                  root.addView(space(22))
+                  val logo = TextView(this).apply {
+                      text = "A"; textSize = 22f; setTextColor(bg)
+                      gravity = Gravity.CENTER; typeface = Typeface.DEFAULT_BOLD
+                      background = shape(yellow, 10)
+                  }
+                  header.addView(logo, LinearLayout.LayoutParams(dp(40), dp(40)))
+                  val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0) }
+                  titles.addView(label("ARNIS", 16f, fgColor, true))
+                  titles.addView(label("Real World → Minecraft", 10f, yellow, true))
+                  header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                  root.addView(header)
 
-                  root.addView(label("Создай свой мир", 26f, fgColor, true))
-                  root.addView(label("Выбери область на карте координатами и сгенерируй её в Minecraft.", 14f, muted, false).apply { setPadding(0, dp(7), 0, 0) })
-                  root.addView(space(20))
+                  val formatRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(dp(16), 0, dp(16), dp(8))
+                  }
+                  javaButton = toggleBtn("Java Edition") { setEdition(false) }
+                  bedrockButton = toggleBtn("Bedrock") { setEdition(true) }
+                  formatRow.addView(javaButton, LinearLayout.LayoutParams(0, dp(38), 1f))
+                  formatRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(8), 1) })
+                  formatRow.addView(bedrockButton, LinearLayout.LayoutParams(0, dp(38), 1f))
+                  root.addView(formatRow)
 
-                  val locationCard = card()
-                  locationCard.addView(label("01  ·  ОБЛАСТЬ", 13f, yellow, true))
-                  locationCard.addView(label("Географические координаты", 16f, fgColor, true).apply { setPadding(0, dp(9), 0, dp(4)) })
-                  locationCard.addView(label("Укажи юго-западный и северо-восточный углы.", 12f, muted, false))
-                  root.addView(locationCard)
+                  webView = WebView(this).apply {
+                      settings.javaScriptEnabled = true
+                      settings.domStorageEnabled = true
+                      settings.builtInZoomControls = true
+                      settings.displayZoomControls = false
+                      addJavascriptInterface(MapBridge(), "Android")
+                      webViewClient = WebViewClient()
+                  }
+                  root.addView(webView, LinearLayout.LayoutParams(-1, 0, 1f))
+                  webView.loadDataWithBaseURL(
+                      "https://unpkg.com", mapHtml(), "text/html", "UTF-8", null
+                  )
 
-                  val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(2)) }
-                  presets.addView(smallButton("Вроцлав") { setCoords(51.105, 17.025, 51.112, 17.035) }, weightedParams())
-                  presets.addView(spaceHorizontal(8))
-                  presets.addView(smallButton("Берлин") { setCoords(52.515, 13.395, 52.522, 13.405) }, weightedParams())
-                  presets.addView(spaceHorizontal(8))
-                  presets.addView(smallButton("NYC") { setCoords(40.711, -74.012, 40.718, -74.002) }, weightedParams())
-                  root.addView(presets)
-
-                  val coords = card()
-                  coords.addView(label("Минимальная широта / долгота", 12f, muted, true))
-                  val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                  minLat = coordinateInput("51.105000")
-                  minLon = coordinateInput("17.025000")
-                  row1.addView(minLat, weightedParams())
-                  row1.addView(spaceHorizontal(10))
-                  row1.addView(minLon, weightedParams())
-                  coords.addView(row1)
-                  coords.addView(label("Максимальная широта / долгота", 12f, muted, true).apply { setPadding(0, dp(12), 0, 0) })
-                  val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                  maxLat = coordinateInput("51.112000")
-                  maxLon = coordinateInput("17.035000")
-                  row2.addView(maxLat, weightedParams())
-                  row2.addView(spaceHorizontal(10))
-                  row2.addView(maxLon, weightedParams())
-                  coords.addView(row2)
-                  root.addView(coords)
-                  root.addView(space(18))
-
-                  val formatCard = card()
-                  formatCard.addView(label("02  ·  ВЕРСИЯ MINECRAFT", 13f, yellow, true))
-                  formatCard.addView(label("Выбери формат мира", 16f, fgColor, true).apply { setPadding(0, dp(8), 0, dp(10)) })
-                  val formatRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                  javaButton = smallButton("Java Edition") { setEdition(false) }
-                  bedrockButton = smallButton("Bedrock") { setEdition(true) }
-                  formatRow.addView(javaButton, weightedParams())
-                  formatRow.addView(spaceHorizontal(10))
-                  formatRow.addView(bedrockButton, weightedParams())
-                  formatCard.addView(formatRow)
-                  root.addView(formatCard)
-                  root.addView(space(20))
+                  clearButton = Button(this).apply {
+                      text = "Очистить территорию"
+                      textSize = 14f; typeface = Typeface.DEFAULT_BOLD; isAllCaps = false
+                      setTextColor(Color.WHITE); background = shape(red, 0)
+                      visibility = View.GONE
+                      setOnClickListener { clearSelection() }
+                  }
+                  root.addView(clearButton, LinearLayout.LayoutParams(-1, dp(50)))
 
                   generateButton = Button(this).apply {
-                      text = "СОЗДАТЬ МИР  →"; textSize = 15f; typeface = Typeface.DEFAULT_BOLD
-                      setTextColor(Color.rgb(25, 25, 25)); background = shape(yellow, 14)
-                      isAllCaps = false; setPadding(dp(12), dp(8), dp(12), dp(8))
+                      text = "СОЗДАТЬ МИР  →"
+                      textSize = 15f; typeface = Typeface.DEFAULT_BOLD; isAllCaps = false
+                      setTextColor(Color.rgb(25, 25, 25)); background = shape(yellow, 0)
                       setOnClickListener { startGeneration() }
                   }
                   root.addView(generateButton, LinearLayout.LayoutParams(-1, dp(56)))
-                  root.addView(space(14))
 
-                  val statusCard = card()
-                  statusCard.addView(label("СТАТУС", 11f, yellow, true))
-                  status = label("Готово к генерации. Для загрузки данных нужен интернет.", 13f, muted, false)
-                  status.setPadding(0, dp(8), 0, 0)
+                  val statusCard = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(10), dp(16), dp(12))
+                      setBackgroundColor(panel)
+                  }
+                  status = label("Тапни две точки на карте чтобы выделить область", 13f, muted, false)
                   statusCard.addView(status)
                   root.addView(statusCard)
-                  root.addView(space(14))
-                  root.addView(label("Arnis · OpenStreetMap → Minecraft", 11f, muted, false).apply { gravity = Gravity.CENTER })
-                  setContentView(scroll)
+
+                  setContentView(root)
                   setEdition(false)
               }
 
+              private fun clearSelection() {
+                  hasSelection = false
+                  clearButton.visibility = View.GONE
+                  status.text = "Тапни две точки на карте чтобы выделить область"
+                  status.setTextColor(muted)
+                  webView.evaluateJavascript("clearSelection();", null)
+              }
+
               private fun startGeneration() {
-                  val a = minLat.text.toString().toDoubleOrNull()
-                  val b = minLon.text.toString().toDoubleOrNull()
-                  val c = maxLat.text.toString().toDoubleOrNull()
-                  val d = maxLon.text.toString().toDoubleOrNull()
-                  if (a == null || b == null || c == null || d == null ||
-                      a !in -90.0..90.0 || c !in -90.0..90.0 ||
-                      b !in -180.0..180.0 || d !in -180.0..180.0 || a >= c || b >= d) {
-                      status.text = "Проверь координаты: значения должны быть числами, а минимум меньше максимума."
-                      status.setTextColor(Color.rgb(255, 130, 120))
+                  if (!hasSelection) {
+                      status.text = "Сначала выдели область на карте!"
+                      status.setTextColor(red)
                       return
                   }
                   generateButton.isEnabled = false
                   generateButton.text = "ГЕНЕРАЦИЯ…"
                   status.setTextColor(muted)
-                  status.text = "Загружаем данные OpenStreetMap и создаём мир. Это может занять несколько минут."
+                  status.text = "Загружаем OSM данные и генерируем мир…"
                   Thread {
                       var success = false
-                      var errorText: String? = null
+                      var msg = ""
                       try {
                           val base = getExternalFilesDir(null) ?: filesDir
                           val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                           val out = File(base, "ArnisWorlds/Arnis_$stamp")
                           out.mkdirs()
-                          success = NativeBridge.generateWorld(a, b, c, d, bedrock, if (bedrock) "1.21.0.3" else "1.21.4", out.absolutePath)
-                          errorText = if (success) "Мир создан: ${out.absolutePath}"
-                          else "Генерация не завершилась. Проверь интернет и попробуй уменьшить область."
+                          success = NativeBridge.generateWorld(
+                              minLat, minLon, maxLat, maxLon,
+                              bedrock, if (bedrock) "1.21.0.3" else "1.21.4",
+                              out.absolutePath
+                          )
+                          msg = if (success) "✓ Мир создан: ${out.absolutePath}"
+                          else "Генерация не завершилась. Проверь интернет или уменьши область."
                       } catch (t: Throwable) {
-                          errorText = "Ошибка: ${t.javaClass.simpleName}: ${t.message ?: "неизвестная ошибка"}"
+                          msg = "Ошибка: ${t.javaClass.simpleName}: ${t.message ?: "?"}"
                       }
+                      val finalMsg = msg; val ok = success
                       runOnUiThread {
                           generateButton.isEnabled = true
                           generateButton.text = "СОЗДАТЬ МИР  →"
-                          status.text = errorText ?: "Готово."
-                          status.setTextColor(if (success) yellow else Color.rgb(255, 130, 120))
+                          status.text = finalMsg
+                          status.setTextColor(if (ok) yellow else red)
                       }
                   }.start()
               }
 
-              private fun setCoords(a: Double, b: Double, c: Double, d: Double) {
-                  minLat.setText("%.6f".format(Locale.US, a)); minLon.setText("%.6f".format(Locale.US, b))
-                  maxLat.setText("%.6f".format(Locale.US, c)); maxLon.setText("%.6f".format(Locale.US, d))
-              }
-
               private fun setEdition(isBedrock: Boolean) {
                   bedrock = isBedrock
-                  styleChoice(javaButton, !isBedrock)
-                  styleChoice(bedrockButton, isBedrock)
+                  styleToggle(javaButton, !isBedrock)
+                  styleToggle(bedrockButton, isBedrock)
               }
 
-              private fun styleChoice(b: Button, selected: Boolean) {
-                  b.background = shape(if (selected) yellow else fieldBg, 10)
+              private fun styleToggle(b: Button, selected: Boolean) {
+                  b.background = shape(if (selected) yellow else panel, 10)
                   b.setTextColor(if (selected) Color.rgb(25, 25, 25) else fgColor)
               }
 
-              private fun coordinateInput(value: String) = EditText(this).apply {
-                  setSingleLine(true); setText(value); textSize = 14f
-                  setTextColor(fgColor); setHintTextColor(muted)
-                  inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
-                  setPadding(dp(12), dp(8), dp(12), dp(8)); background = shape(fieldBg, 9)
+              inner class MapBridge {
+                  @JavascriptInterface
+                  fun onBboxSelected(lat1: Double, lon1: Double, lat2: Double, lon2: Double) {
+                      minLat = minOf(lat1, lat2); maxLat = maxOf(lat1, lat2)
+                      minLon = minOf(lon1, lon2); maxLon = maxOf(lon1, lon2)
+                      hasSelection = true
+                      runOnUiThread {
+                          clearButton.visibility = View.VISIBLE
+                          status.text = "Область: %.4f,%.4f → %.4f,%.4f".format(minLat, minLon, maxLat, maxLon)
+                          status.setTextColor(yellow)
+                      }
+                  }
               }
 
-              private fun smallButton(caption: String, action: () -> Unit) = Button(this).apply {
-                  text = caption; textSize = 12f; isAllCaps = false
-                  setTextColor(fgColor); background = shape(fieldBg, 10)
-                  setPadding(dp(4), dp(4), dp(4), dp(4)); setOnClickListener { action() }
+              private fun mapHtml() = """
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <style>
+          * { margin:0; padding:0; box-sizing:border-box; }
+          html,body,#map { width:100%; height:100%; background:#232323; }
+          #searchbox {
+              position:absolute; top:10px; left:50%; transform:translateX(-50%);
+              z-index:1000; display:flex; gap:6px; width:90%;
+          }
+          #searchbox input {
+              flex:1; padding:8px 12px; border-radius:8px; border:none;
+              background:#1b1b1b; color:#f5f5f5; font-size:14px; outline:none;
+          }
+          #searchbox button {
+              padding:8px 14px; border-radius:8px; border:none;
+              background:#fecc44; color:#191919; font-weight:bold; font-size:13px;
+          }
+          #hint {
+              position:absolute; bottom:10px; left:50%; transform:translateX(-50%);
+              z-index:1000; background:rgba(35,35,35,0.85); color:#b4b4b4;
+              padding:6px 14px; border-radius:20px; font-size:12px; pointer-events:none;
+          }
+          </style>
+          </head>
+          <body>
+          <div id="searchbox">
+              <input id="q" type="text" placeholder="Поиск места…" />
+              <button onclick="search()">Найти</button>
+          </div>
+          <div id="map"></div>
+          <div id="hint">Тапни 1-ю точку</div>
+          <script>
+          var map = L.map('map').setView([51.505, -0.09], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+              maxZoom:19, attribution:'© OSM'
+          }).addTo(map);
+          var pt1=null,pt2=null,rect=null;
+          var hint=document.getElementById('hint');
+          function clearSelection(){
+              pt1=null;pt2=null;
+              if(rect){map.removeLayer(rect);rect=null;}
+              hint.textContent='Тапни 1-ю точку';
+          }
+          map.on('click',function(e){
+              if(!pt1){
+                  pt1=e.latlng;
+                  hint.textContent='Тапни 2-ю точку';
+              } else {
+                  pt2=e.latlng;
+                  if(rect)map.removeLayer(rect);
+                  var bounds=L.latLngBounds(pt1,pt2);
+                  rect=L.rectangle(bounds,{
+                      color:'#fecc44',weight:2,
+                      fillColor:'#fecc44',fillOpacity:0.18
+                  }).addTo(map);
+                  hint.textContent='Область выделена';
+                  Android.onBboxSelected(pt1.lat,pt1.lng,pt2.lat,pt2.lng);
+                  pt1=null;pt2=null;
               }
+          });
+          function search(){
+              var q=document.getElementById('q').value.trim();
+              if(!q)return;
+              fetch('https://nominatim.openstreetmap.org/search?format=json&q='+encodeURIComponent(q))
+                  .then(r=>r.json())
+                  .then(data=>{
+                      if(data.length>0){
+                          map.setView([parseFloat(data[0].lat),parseFloat(data[0].lon)],15);
+                      } else {
+                          hint.textContent='Место не найдено';
+                      }
+                  });
+          }
+          document.getElementById('q').addEventListener('keydown',function(e){
+              if(e.key==='Enter')search();
+          });
+          </script>
+          </body>
+          </html>
+              """.trimIndent()
 
-              private fun card() = LinearLayout(this).apply {
-                  orientation = LinearLayout.VERTICAL
-                  setPadding(dp(15), dp(15), dp(15), dp(15)); background = shape(panel, 14)
-                  layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) }
+              private fun toggleBtn(caption: String, action: () -> Unit) = Button(this).apply {
+                  text = caption; textSize = 13f; isAllCaps = false
+                  setTextColor(fgColor); background = shape(panel, 10)
+                  setOnClickListener { action() }
               }
 
               private fun label(value: String, size: Float, color: Int, bold: Boolean) = TextView(this).apply {
@@ -312,14 +377,10 @@ jobs:
                   setColor(color); cornerRadius = dp(radius).toFloat()
               }
 
-              private fun space(h: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(h)) }
-              private fun spaceHorizontal(w: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(w), 1) }
-              private fun weightedParams() = LinearLayout.LayoutParams(0, dp(46), 1f)
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
           }
           KT
 
-      # ── 9. Android project structure ──────────────────────────────────────
       - name: Generate Android project files
         run: |
           set -euo pipefail
@@ -444,7 +505,6 @@ jobs:
           </resources>
           XML
 
-      # ── 10. keystore ──────────────────────────────────────────────────────
       - name: Generate debug keystore
         run: |
           keytool \
@@ -457,7 +517,6 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      # ── 11. Gradle 8.5 + assembleRelease ──────────────────────────────────
       - name: Build APK with Gradle
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
@@ -469,32 +528,15 @@ jobs:
           gradle --version
           gradle assembleRelease --no-daemon --stacktrace
 
-      # ── 12. verify ────────────────────────────────────────────────────────
       - name: Verify APK
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
           APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
           if [ ! -f "$APK_PATH" ]; then
-            echo "APK not found at $APK_PATH"
-            find android/app/build/outputs -name "*.apk" 2>/dev/null || echo "no apks found"
+            echo "APK not found"
             exit 1
           fi
           ls -lh "$APK_PATH"
 
-      # ── 13. inspect JNI ───────────────────────────────────────────────────
-      - name: Inspect APK contents and JNI exports
-        run: |
-          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          echo "=== Native libs in APK ==="
-          unzip -Z1 "$APK_PATH" | grep -E '\.so$' || true
-          TMP_SO="$(mktemp --suffix=.so)"
-          unzip -p "$APK_PATH" lib/arm64-v8a/libarnis_mobile.so > "$TMP_SO"
-          echo "=== JNI symbols ==="
-          strings "$TMP_SO" | grep "Java_com_arnis" || echo "WARNING: no JNI symbols found"
-          rm -f "$TMP_SO"
-
-      # ── 14. upload artifact ───────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -502,7 +544,6 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      # ── 15. GitHub Release ────────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -510,10 +551,8 @@ jobs:
           name: "Arnis Mobile v1.0.${{ github.run_number }}"
           body: |
             Android APK — автосборка из Actions.
-
-            **Установка:** скачай APK, разреши установку из неизвестных источников, установи.
-            **Минимальная версия Android:** 7.0 (API 24)
-            **Архитектура:** arm64-v8a
+            Минимальная версия Android: 7.0 (API 24)
+            Архитектура: arm64-v8a
           files: android/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
