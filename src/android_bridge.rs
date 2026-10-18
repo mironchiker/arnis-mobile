@@ -8,33 +8,34 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
-fn run_generation(
+fn run_generation_file(
     env: &mut JNIEnv,
-    min_lat: f64,
-    min_lon: f64,
-    max_lat: f64,
-    max_lon: f64,
+    osm_file: &JString,
     is_bedrock: jboolean,
     output_path: &JString,
 ) -> jboolean {
+    let osm_path_str: String = match env.get_string(osm_file) {
+        Ok(s) => s.into(),
+        Err(e) => { eprintln!("[arnis-bridge] get_string(osm_file) failed: {e}"); return 0; }
+    };
     let out_path_str: String = match env.get_string(output_path) {
         Ok(s) => s.into(),
-        Err(e) => { eprintln!("[arnis-bridge] get_string failed: {e}"); return 0; }
+        Err(e) => { eprintln!("[arnis-bridge] get_string(output_path) failed: {e}"); return 0; }
     };
 
     CANCEL_FLAG.store(false, Ordering::SeqCst);
 
-    let llbbox = match crate::coordinate_system::geographic::LLBBox::new(
-        min_lat, min_lon, max_lat, max_lon,
-    ) {
-        Ok(b) => b,
-        Err(e) => { eprintln!("[arnis-bridge] invalid bbox: {e}"); return 0; }
-    };
+    let osm_file_path = PathBuf::from(&osm_path_str);
+    if !osm_file_path.exists() {
+        eprintln!("[arnis-bridge] osm file not found: {osm_path_str}");
+        return 0;
+    }
 
     let out_dir = PathBuf::from(&out_path_str);
     if !out_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
-            eprintln!("[arnis-bridge] create_dir_all failed: {e}"); return 0;
+            eprintln!("[arnis-bridge] create_dir_all failed: {e}");
+            return 0;
         }
     }
 
@@ -45,16 +46,16 @@ fn run_generation(
     use crate::projection::ProjectionKind;
     use crate::trees::tree_library::TreeSize;
 
-    let args = crate::args::Args {
-        bbox: Some(llbbox),
-        file: None,
+    let mut args = crate::args::Args {
+        bbox: None,
+        file: Some(osm_file_path.clone()),
         save_json_file: None,
         path: Some(out_dir.clone()),
         bedrock: is_bedrock_bool,
         luanti: false,
         downloader: "requests".to_string(),
         osm_tiles_url: crate::osm_tiles::DEFAULT_OSM_TILES_URL.to_string(),
-        no_tile_archive: false,
+        no_tile_archive: true,
         scale: 1.0,
         height_multiplier: 1.0,
         body: CelestialBody::Earth,
@@ -114,14 +115,17 @@ fn run_generation(
         zombie_outbreak: false,
     };
 
-    eprintln!("[arnis-bridge] fetching OSM data...");
-    let raw_osm = match crate::retrieve_data::fetch_osm_data(
-        llbbox, false, "requests", None,
-        &crate::osm_tiles::DEFAULT_OSM_TILES_URL.to_string(), true,
-    ) {
+    eprintln!("[arnis-bridge] reading osm file: {osm_path_str}");
+    let (raw_osm, file_bounds) = match crate::retrieve_data::fetch_data_from_file(&osm_file_path) {
         Ok(d) => d,
-        Err(e) => { eprintln!("[arnis-bridge] fetch_osm_data failed: {e}"); return 0; }
+        Err(e) => { eprintln!("[arnis-bridge] fetch_data_from_file failed: {e}"); return 0; }
     };
+
+    let llbbox = match crate::osm_parser::resolve_bbox(args.bbox, file_bounds, &raw_osm) {
+        Ok(b) => b,
+        Err(e) => { eprintln!("[arnis-bridge] resolve_bbox failed: {e}"); return 0; }
+    };
+    args.bbox = Some(llbbox);
 
     if CANCEL_FLAG.load(Ordering::SeqCst) { return 0; }
 
@@ -194,19 +198,15 @@ fn run_generation(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_arnis_app_NativeBridge_generateWorld(
+pub extern "system" fn Java_com_arnis_app_NativeBridge_generateWorldFromFile(
     mut env: JNIEnv,
     _class: JClass,
-    min_lat: f64,
-    min_lon: f64,
-    max_lat: f64,
-    max_lon: f64,
+    osm_file: JString,
     is_bedrock: jboolean,
-    _version: JString,
     output_path: JString,
 ) -> jboolean {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_generation(&mut env, min_lat, min_lon, max_lat, max_lon, is_bedrock, &output_path)
+        run_generation_file(&mut env, &osm_file, is_bedrock, &output_path)
     })) {
         Ok(r) => r,
         Err(e) => {
